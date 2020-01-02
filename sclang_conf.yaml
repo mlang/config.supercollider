@@ -1,0 +1,5 @@
+includePaths:
+    -   /home/mlang/.local/share/SuperCollider/Quarks/Motorized
+excludePaths:
+    []
+postInlineWarnings: false
