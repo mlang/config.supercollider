@@ -1,3 +1,4 @@
+var cond = Condition.new;
 var isActive = {|service, onActive, onInactive|
 	[
 		"systemctl", "--user", "--quiet", "is-active",
@@ -6,46 +7,65 @@ var isActive = {|service, onActive, onInactive|
 		if(exitCode == 0, onActive, onInactive)
 	};
 };
-~patches = (
-	thisProcess.nowExecutingPath.dirname +/+ "Patches" +/+ "*.scd"
-).pathMatch.sort;
-~currentPatch = 0;
-
-c = Condition.new;
-isActive.value("motu.service") {
-	"Setting channels".postln;
+var patchesDir = thisProcess.nowExecutingPath.dirname +/+ "Patches";
+var patches = (patchesDir +/+ "*.scd").pathMatch.sort;
+var currentPatch = 0;
+var runPatch, freePatch;
+"---------------------------------------------------------------------".postln;
+Spec.specs[\tempo] = ControlSpec(40, 240, \linear,
+	default: TempoClock.default.tempo * 60,
+	units: "BPM"
+);
+isActive.value(\motu) {
+	"MOTU detected, using 8 input channels".postln;
 	Server.default.options.numInputBusChannels = 8;
 	Server.default.options.numOutputBusChannels = 4;
-	c.test = true;
-	c.signal;
+	cond.test = true;
+	cond.signal;
 } {
+	"MOTU not found".postln;
 	Server.default.options.blockSize = 32;
-	c.test = true;
-	c.signal;
+	cond.test = true;
+	cond.signal;
 };
 
 ~samplesDir = "/home/mlang/annexus/samples";
 // MIDI
 MIDIClient.init(verbose: false);
-MIDIIn.connectAll(verbose: false);
-MIDIClient.destinations.detectIndex {|ep|
-	ep.device == "MOTÖR49 Keyboard" and: ep.name == "MOTÖR49 Keyboard MIDI 1"
-} !? {|index|
-	MOTOR.midiOut = MIDIOut(0).connect(index);
-	MOTOR.fader(\master, \db, s.volume = _).value = s.volume.volume;
-	MOTOR.backward({
-		~currentPatch = ~currentPatch - 1;
-		~freePatch.value;
-		~loadPatch.value;
-	});
-	MOTOR.forward({
-		~currentPatch = ~currentPatch + 1;
-		~freePatch.value;
-		~loadPatch.value;
-	});
-	MOTOR.stop({ thisProcess.stop });
-	MOTOR.play({ thisProcess.run });
-	MOTOR.record({ if(s.isRecording, { s.stopRecording }, { s.record }) });
+MIDIClient.externalSources.detect(MOTOR.isMIDIEndPoint) !? {|motor|
+	MIDIIn.connect(0, motor);
+	"Behringer % input connected\n".postf(motor.name);
+	MIDIClient.destinations.detectIndex(MOTOR.isMIDIEndPoint) !? {|index|
+		MOTOR.midiOut = MIDIOut(0).connect(index);
+		"Behringer % output connected\n".postf(motor.name);
+
+		"Master fader controls server volume".postln;
+		MOTOR.fader(\master, \db, s.volume = _).value = s.volume.volume;
+		"Use << and >> to change patches".postln;
+		MOTOR.backward {
+			currentPatch = currentPatch - 1;
+			freePatch.value;
+			~loadPatch.value;
+		};
+		MOTOR.forward {
+			currentPatch = currentPatch + 1;
+			freePatch.value;
+			~loadPatch.value;
+		};
+		MOTOR.stop { thisProcess.stop };
+		MOTOR.play { runPatch.value };
+
+		"REC will toggle recording".postln;
+		MOTOR.record {
+			if(s.isRecording) { s.stopRecording } { s.record }
+		};
+
+		"Encoder 32 changes default tempo".postln;
+		MOTOR.encoder(32, \tempo) {|bpm|
+			"% BPM\n".postf(bpm.asInteger);
+			TempoClock.default.tempo = bpm/60;
+		};
+	}
 };
 
 ~brl = BrlOSC({|...args|args.postln}, {|...args|args.postln}, ":1");
@@ -56,16 +76,18 @@ MIDIClient.destinations.detectIndex {|ep|
 	)
 });
 ~loadPatch = {
-	var patch = ~patches.wrapAt(~currentPatch);
+	var patch = patches.wrapAt(currentPatch);
 	~brl.write(patch.basename);
-	~freePatch = patch.load;
+	#runPatch, freePatch = patch.load;
+	"Patch % loaded\n".postf(patch.basename);
 	Document.open(patch);
+	runPatch.value;
 };
 
 Routine.run( {
-	c.wait;
+	cond.wait;
 	~brl.write("Server booting");
-    s.bootSync(c);
+    s.bootSync(cond);
 	~brl.write("Server running");
 	~loadPatch.value;
     TempoClock.default.tempo = 120/60;
@@ -75,7 +97,7 @@ Routine.run( {
 			Bus.control(s)
 		})
 	});
-	32.do{|i|
+	31.do{|i|
 		MOTOR.encoder(i+1, \unipolar, {|value, num, motor|
 			var str = value.asString.keep(9).padRight(14-motor.spec.units.size) ++ motor.spec.units;
 			~brl.write(str);
@@ -244,7 +266,7 @@ Routine.run( {
 		ReplaceOut.ar(outBus, out);
 	}).add;
 
-    s.sync(c);
+    s.sync(cond);
 
 	Pbind(*[
 		instrument: \acid,

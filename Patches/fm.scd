@@ -1,11 +1,9 @@
+// Frequency Modulation
 // =====================================================================
-// SuperCollider Frequency Modulation Patch
-// =====================================================================
-
 var notes = Array.newClear(128);
-var keys = Group.new(s);
 var fxBus = Bus.audio(s, 2);
-var fx;
+var keys;
+var reverb;
 
 SynthDef("fm", {
 	arg	freq=440, detune=1, cmul=1, mmul=1, index=1,
@@ -23,30 +21,17 @@ SynthDef("fm", {
 	Out.ar(out, sig);
 }).add;
 
-SynthDef(\fx, {|out=0, in|
-	var signal = In.ar(in, 1);
-	signal = AllpassC.ar(
-		signal,
-		0.04,
-		{
-			Rand(0.001, 0.04)
-		} ! 32,
-		2
-	);
-	signal = Splay.ar(signal);
-	Out.ar(out, signal);
-}).add;
 SynthDef(\reverb, {
 	arg in=0, out=0, dec=4, lpf=1500, amp=0.1;
 	var sig;
-	sig = In.ar(in, 2).sum * amp;
 
+	sig = In.ar(in, 2).sum * amp;
 	sig = DelayN.ar(sig, 0.03, 0.03);
-	sig = CombN.ar(sig, 0.1, {Rand(0.01,0.099)}!32, dec);
+	sig = CombN.ar(sig, 0.1, {Rand(0.01,0.099)} ! 32, dec);
 	sig = SplayAz.ar(2, sig);
 	sig = LPF.ar(sig, lpf);
-	5.do{
-		sig = AllpassN.ar(sig, 0.1, {Rand(0.01,0.099)}!2, 2)
+	5.do {
+		sig = AllpassN.ar(sig, 0.1, {Rand(0.01,0.099)} ! 2, 2)
 	};
 	sig = LPF.ar(sig, lpf);
 	sig = LeakDC.ar(sig);
@@ -54,37 +39,46 @@ SynthDef(\reverb, {
 	Out.ar(out, sig);
 }).add;
 
-fx = Synth.after(keys, \reverb, [\in, fxBus]);
+[
+	{
+		keys = Group.new(s);
+		reverb = Synth.after(keys, \reverb, [\in, fxBus]);
 
-MOTOR.bend([-2.midiratio, 2.midiratio, \lin, 0.0, 1.0]).connect(keys, \detune);
-MOTOR.modwheel([1, 12, \lin, 0, 1]).connect(keys, \index);
-MOTOR.encoder(1, [1, 128, \lin, 0, 1]).connect(keys, \cmul);
-MOTOR.encoder(2, \midi).connect(keys, \mmul);
+		MOTOR.bend(
+			ControlSpec(-2.midiratio, 2.midiratio, \lin, default: 1.0)
+		).connect(keys, \detune);
+		MOTOR.modwheel(
+			ControlSpec(1, 12, \lin, default: 1)
+		).connect(keys, \index);
+		MOTOR.encoder(1,
+			ControlSpec(1, 128, \lin, step: 1, default: 1)
+		).connect(keys, \cmul);
+		MOTOR.encoder(2,
+			ControlSpec(0, 127, \lin, step: 1, default: 0)
+		).connect(keys, \mmul);
 
-MOTOR.noteOn(\unipolar, {|amp, num|
-	num !? {|num|
-		notes[num] = Synth(\fm, [
-			\freq, num.midicps,
-			\detune, MOTOR.bend.value,
-			\amp, amp,
-			\index, MOTOR.modwheel.value,
-			\cmul, MOTOR.encoder(1).value,
-			\mmul, MOTOR.encoder(2).value,
-			\fx, fx
-		], keys);
+		MOTOR.noteOn(\unipolar, {|amp, num|
+			num !? {|num|
+				notes[num] = Synth(\fm, [
+					\freq, num.midicps,
+					\detune, MOTOR.bend.value,
+					\amp, amp,
+					\index, MOTOR.modwheel.value,
+					\cmul, MOTOR.encoder(1).value,
+					\mmul, MOTOR.encoder(2).value,
+					\fx, fxBus
+				], keys);
+			}
+		});
+		MOTOR.noteOff { |vel, num|
+			notes[num].set(\gate, 0)
+		};
+	},
+	{
+		notes.do {|synth| synth.set(\gate, 0) };
+		notes.free;
+		reverb.free;
+		fxBus.free;
+		keys.free;
 	}
-});
-MOTOR.noteOff({ |vel, num|
-	notes[num].set(\gate, 0)
-});
-
-{
-	notes.do {|synth|
-		synth.set(\gate, 0)
-	};
-	notes.free;
-	fx.free;
-	fxBus.free;
-	keys.free;
-	notes.free;
-}
+]
