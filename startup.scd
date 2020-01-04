@@ -3,19 +3,20 @@ var isActive = {|service, onActive, onInactive|
 	[
 		"systemctl", "--user", "--quiet", "is-active",
 		service.asString
-	].unixCmd{ |exitCode|
+	].unixCmd {| exitCode |
 		if(exitCode == 0, onActive, onInactive)
 	};
 };
 var patchesDir = thisProcess.nowExecutingPath.dirname +/+ "Patches";
 var patches = (patchesDir +/+ "*.scd").pathMatch.sort;
 var currentPatch = 0;
-var runPatch, freePatch;
+var patch;
 "---------------------------------------------------------------------".postln;
 Spec.specs[\tempo] = ControlSpec(40, 240, \linear,
 	default: TempoClock.default.tempo * 60,
 	units: "BPM"
 );
+
 isActive.value(\motu) {
 	"MOTU detected, using 8 input channels".postln;
 	Server.default.options.numInputBusChannels = 8;
@@ -35,8 +36,8 @@ MIDIClient.init(verbose: false);
 MIDIClient.externalSources.detect(MOTOR.isMIDIEndPoint) !? {|motor|
 	MIDIIn.connect(0, motor);
 	"Behringer % input connected\n".postf(motor.name);
-	MIDIClient.destinations.detectIndex(MOTOR.isMIDIEndPoint) !? {|index|
-		MOTOR.midiOut = MIDIOut(0).connect(index);
+	MIDIClient.externalDestinations.detectIndex(MOTOR.isMIDIEndPoint) !? {|i|
+		MOTOR.midiOut = MIDIOut(0).connect(i);
 		"Behringer % output connected\n".postf(motor.name);
 
 		"Master fader controls server volume".postln;
@@ -44,22 +45,22 @@ MIDIClient.externalSources.detect(MOTOR.isMIDIEndPoint) !? {|motor|
 		"Use << and >> to change patches".postln;
 		MOTOR.backward {
 			currentPatch = currentPatch - 1;
-			freePatch.value;
+			patch[\free].value;
 			~loadPatch.value;
 		};
 		MOTOR.forward {
 			currentPatch = currentPatch + 1;
-			freePatch.value;
+			patch[\free].value;
 			~loadPatch.value;
 		};
 		MOTOR.stop { thisProcess.stop };
-		MOTOR.play { runPatch.value };
+		MOTOR.play { patch[\play].value };
 
 		"REC will toggle recording".postln;
 		MOTOR.record {
 			if(s.isRecording) { s.stopRecording } { s.record }
 		};
-
+		
 		"Encoder 32 changes default tempo".postln;
 		MOTOR.encoder(32, \tempo) {|bpm|
 			"% BPM\n".postf(bpm.asInteger);
@@ -69,47 +70,46 @@ MIDIClient.externalSources.detect(MOTOR.isMIDIEndPoint) !? {|motor|
 };
 
 ~brl = BrlOSC({|...args|args.postln}, {|...args|args.postln}, ":1");
-~brl.addDependant({|brl, what, value|
+~brl.addDependant {|brl, what|
 	switch(what,
 		\connected, { brl.grab },
 		\acquired, { brl.write("Super Collider") }
 	)
-});
+};
 ~loadPatch = {
-	var patch = patches.wrapAt(currentPatch);
-	~brl.write(patch.basename);
-	#runPatch, freePatch = patch.load;
-	"Patch % loaded\n".postf(patch.basename);
-	Document.open(patch);
-	runPatch.value;
+	var patchFile = patches.wrapAt(currentPatch);
+	~brl.write(patchFile.basename);
+	patch = patchFile.load;
+	"Patch % loaded\n".postf(patchFile.basename);
+	Document.open(patchFile);
+	patch[\play].value;
 };
 
-Routine.run( {
+Routine.run {
 	cond.wait;
 	~brl.write("Server booting");
     s.bootSync(cond);
 	~brl.write("Server running");
 	~loadPatch.value;
-    TempoClock.default.tempo = 120/60;
 
-	~encoder=Array.fill(4, {
+	~encoder=Array.fill(3, {
 		Array.fill(8, {
 			Bus.control(s)
 		})
 	});
-	31.do{|i|
+	24.do{|i|
 		MOTOR.encoder(i+1, \unipolar, {|value, num, motor|
 			var str = value.asString.keep(9).padRight(14-motor.spec.units.size) ++ motor.spec.units;
 			~brl.write(str);
 			~encoder[i div: 8][i % 8].value = value
 		})
 	};
-	~fader=Array.fill(4, {
+	~fader=Array.fill(3, {
 		Array.fill(8, {
 			Bus.control(s)
 		})
 	});
-	32.do{|i|
+	24.do{|i|
 		MOTOR.fader(i+1, \unipolar, {|value, num, motor|
 			var str = value.asString.keep(9).padRight(14-motor.spec.units.size) ++ motor.spec.units;
 			~brl.write(str);
@@ -118,7 +118,7 @@ Routine.run( {
 	};
 
 	~tabla = (~samplesDir +/+ "sounds/tabla*.wav").pathMatch.collect(
-		Buffer.read(s,_)
+		Buffer.read(s, _)
 	);
 	~tabla.do {|buf, i|
 		MOTOR.padOn(i+1, \unipolar, {|amp|
@@ -273,4 +273,4 @@ Routine.run( {
 		pitch: Pseq([39,42,46,51]),
 		dur: Pseq([Pn(0.25, 3), 0.5], 1)
     ]).play;
-})
+}

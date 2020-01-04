@@ -39,46 +39,46 @@ SynthDef(\reverb, {
 	Out.ar(out, sig);
 }).add;
 
-[
-	{
-		keys = Group.new(s);
-		reverb = Synth.after(keys, \reverb, [\in, fxBus]);
+(
+play: {
+	keys = Group.new(s);
+	reverb = Synth.after(keys, \reverb, [\in, fxBus]);
 
-		MOTOR.bend(
-			ControlSpec(-2.midiratio, 2.midiratio, \lin, default: 1.0)
-		).connect(keys, \detune);
-		MOTOR.modwheel(
-			ControlSpec(1, 12, \lin, default: 1)
-		).connect(keys, \index);
-		MOTOR.encoder(1,
-			ControlSpec(1, 128, \lin, step: 1, default: 1)
-		).connect(keys, \cmul);
-		MOTOR.encoder(2,
-			ControlSpec(0, 127, \lin, step: 1, default: 0)
-		).connect(keys, \mmul);
-
-		MOTOR.noteOn(\unipolar, {|amp, num|
-			num !? {|num|
-				notes[num] = Synth(\fm, [
-					\freq, num.midicps,
-					\detune, MOTOR.bend.value,
-					\amp, amp,
-					\index, MOTOR.modwheel.value,
-					\cmul, MOTOR.encoder(1).value,
-					\mmul, MOTOR.encoder(2).value,
-					\fx, fxBus
-				], keys);
-			}
-		});
-		MOTOR.noteOff { |vel, num|
-			notes[num].set(\gate, 0)
-		};
-	},
-	{
-		notes.do {|synth| synth.set(\gate, 0) };
-		notes.free;
-		reverb.free;
-		fxBus.free;
-		keys.free;
-	}
-]
+	MOTOR.bend(
+		ControlSpec(-2.midiratio, 2.midiratio, \lin, default: 1.0)
+	).connect(keys, \detune);
+	MOTOR.modwheel(
+		ControlSpec(1, 12, \lin, default: 1)
+	).connect(keys, \index);
+	MOTOR.encoder(1,
+		ControlSpec(1, 128, \lin, step: 1, default: 1)
+	).connect(keys, \cmul);
+	MOTOR.encoder(2,
+		ControlSpec(0, 127, \lin, step: 1, default: 0)
+	).connect(keys, \mmul);
+	
+	MOTOR.noteOn(\unipolar, {|amp, num|
+		num !? {|num|
+			notes[num] = Synth(\fm, [
+				\freq, num.midicps,
+				\detune, MOTOR.bend.value,
+				\amp, amp,
+				\index, MOTOR.modwheel.value,
+				\cmul, MOTOR.encoder(1).value,
+				\mmul, MOTOR.encoder(2).value,
+				\fx, fxBus
+			], keys);
+		}
+	});
+	MOTOR.noteOff { |vel, num|
+		notes[num].set(\gate, 0)
+	};
+},
+free: {
+	notes.do {|synth| synth.set(\gate, 0) };
+	notes.free;
+	reverb.free;
+	fxBus.free;
+	keys.free;
+}
+)
