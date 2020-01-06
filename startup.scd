@@ -1,5 +1,5 @@
 var cond = Condition.new;
-var isActive = {|service, onActive, onInactive|
+var isActive = {| service, onActive, onInactive |
 	[
 		"systemctl", "--user", "--quiet", "is-active",
 		service.asString
@@ -11,8 +11,22 @@ var patchesDir = thisProcess.nowExecutingPath.dirname +/+ "Patches";
 var patches = (patchesDir +/+ "*.scd").pathMatch.sort;
 var currentPatch = 0;
 var patch;
+var loadPatch = {| i |
+	var patchFile = patches.wrapAt(i);
+	~brl.write(patchFile.basename);
+	patch = patchFile.load;
+	"Patch % loaded\n".postf(patchFile.basename);
+	Document.open(patchFile);
+	patch['play'].value;
+};
+var changePatch = {| op |
+	patch['free'].value;
+	currentPatch = currentPatch.perform(op, 1);
+	loadPatch.value(currentPatch);
+};
 "---------------------------------------------------------------------".postln;
-Spec.specs[\tempo] = ControlSpec(40, 240, \linear,
+~samplesDir = "/home/mlang/annexus/samples";
+Spec.specs['tempo'] = ControlSpec(40, 240, 'linear',
 	default: TempoClock.default.tempo * 60,
 	units: "BPM"
 );
@@ -30,29 +44,20 @@ isActive.value(\motu) {
 	cond.signal;
 };
 
-~samplesDir = "/home/mlang/annexus/samples";
 // MIDI
 MIDIClient.init(verbose: false);
 MIDIClient.externalSources.detect(MOTOR.isMIDIEndPoint) !? {|motor|
+	"Connecting to Behringer %...".postf(motor.name);
 	MIDIIn.connect(0, motor);
-	"Behringer % input connected\n".postf(motor.name);
 	MIDIClient.externalDestinations.detectIndex(MOTOR.isMIDIEndPoint) !? {|i|
 		MOTOR.midiOut = MIDIOut(0).connect(i);
-		"Behringer % output connected\n".postf(motor.name);
+		"Done".postln;
 
 		"Master fader controls server volume".postln;
 		MOTOR.fader(\master, \db, s.volume = _).value = s.volume.volume;
 		"Use << and >> to change patches".postln;
-		MOTOR.backward {
-			currentPatch = currentPatch - 1;
-			patch[\free].value;
-			~loadPatch.value;
-		};
-		MOTOR.forward {
-			currentPatch = currentPatch + 1;
-			patch[\free].value;
-			~loadPatch.value;
-		};
+		MOTOR.backward { changePatch.value('-') };
+		MOTOR.forward  { changePatch.value('+') };
 		MOTOR.stop { thisProcess.stop };
 		MOTOR.play { patch[\play].value };
 
@@ -76,21 +81,12 @@ MIDIClient.externalSources.detect(MOTOR.isMIDIEndPoint) !? {|motor|
 		\acquired, { brl.write("Super Collider") }
 	)
 };
-~loadPatch = {
-	var patchFile = patches.wrapAt(currentPatch);
-	~brl.write(patchFile.basename);
-	patch = patchFile.load;
-	"Patch % loaded\n".postf(patchFile.basename);
-	Document.open(patchFile);
-	patch[\play].value;
-};
 
 Routine.run {
 	cond.wait;
 	~brl.write("Server booting");
     s.bootSync(cond);
 	~brl.write("Server running");
-	~loadPatch.value;
 
 	~encoder=Array.fill(3, {
 		Array.fill(8, {
@@ -116,6 +112,19 @@ Routine.run {
 			~fader[i div: 8][i % 8].value = value
 		})
 	};
+
+	{
+		var sf = SoundFile.new;
+		~loop = (~samplesDir +/+ "BT*/*/*.wav").pathMatch.collect{| path |
+			var dur, bpm, beats;
+			sf.openRead(path);
+			dur = sf.duration;
+			sf.close;
+			bpm = path.split($/)[7].split($ )[0].asInteger;
+			beats = (dur/(60/bpm)).round(1);
+			BBCutBuffer(path, beats)
+		}
+	}.value;
 
 	~tabla = (~samplesDir +/+ "sounds/tabla*.wav").pathMatch.collect(
 		Buffer.read(s, _)
@@ -267,6 +276,7 @@ Routine.run {
 	}).add;
 
     s.sync(cond);
+	loadPatch.value(currentPatch);
 
 	Pbind(*[
 		instrument: \acid,

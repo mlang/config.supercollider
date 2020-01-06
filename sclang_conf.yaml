@@ -1,5 +1,6 @@
 includePaths:
     -   /home/mlang/.local/share/SuperCollider/Quarks/Motorized
+    -   /home/mlang/.local/share/SuperCollider/downloaded-quarks/BBCut
 excludePaths:
     []
 postInlineWarnings: false
