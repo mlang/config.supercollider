@@ -5,7 +5,7 @@ var isActive = {| service, onActive, onInactive |
 		service.asString
 	].unixCmd {| exitCode |
 		if(exitCode == 0, onActive, onInactive)
-	};
+	}
 };
 var patchesDir = thisProcess.nowExecutingPath.dirname +/+ "Patches";
 var patches = (patchesDir +/+ "*.scd").pathMatch.sort;
@@ -53,8 +53,6 @@ MIDIClient.externalSources.detect(MOTOR.isMIDIEndPoint) !? {|motor|
 		MOTOR.midiOut = MIDIOut(0).connect(i);
 		"Done".postln;
 
-		"Master fader controls server volume".postln;
-		MOTOR.fader(\master, \db, s.volume = _).value = s.volume.volume;
 		"Use << and >> to change patches".postln;
 		MOTOR.backward { changePatch.value('-') };
 		MOTOR.forward  { changePatch.value('+') };
@@ -88,6 +86,8 @@ Routine.run {
     s.bootSync(cond);
 	~brl.write("Server running");
 
+	inform("Master fader controls server volume");
+	MOTOR.fader(\master, \db, s.volume = _).value = s.volume.volume;
 	~encoder=Array.fill(3, {
 		Array.fill(8, {
 			Bus.control(s)
@@ -113,23 +113,22 @@ Routine.run {
 		})
 	};
 
-	{
-		var sf = SoundFile.new;
-		~loop = (~samplesDir +/+ "BT*/*/*.wav").pathMatch.collect{| path |
-			var dur, bpm, beats;
-			sf.openRead(path);
-			dur = sf.duration;
-			sf.close;
-			bpm = path.split($/)[7].split($ )[0].asInteger;
-			beats = (dur/(60/bpm)).round(1);
-			BBCutBuffer(path, beats)
+	"Loading loops...".post;
+	~loop = (~samplesDir +/+ "BT*/*/*.wav").pathMatch.collect{| path |
+		var bps = path.split($/)[7].split($ )[0].asInteger / 60;
+		SoundFile.use(path, _.duration) !? {| dur |
+			var beats = (dur * bps).round(1);
+			var buf = BBCutBuffer(path, beats);
+			s.sync(cond);
+			buf
 		}
-	}.value;
+	};
+	"Done (%)\n".postf(~loop.size);
 
 	~tabla = (~samplesDir +/+ "sounds/tabla*.wav").pathMatch.collect(
 		Buffer.read(s, _)
 	);
-	~tabla.do {|buf, i|
+	~tabla.do {| buf, i |
 		MOTOR.padOn(i+1, \unipolar, {|amp|
 			Synth(\playbuf, [
 				\bufnum, buf.bufnum,
