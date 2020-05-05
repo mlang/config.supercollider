@@ -17,12 +17,22 @@ var loadPatch = {| i |
 	patch = patchFile.load;
 	"Patch % loaded\n".postf(patchFile.basename);
 	Document.open(patchFile);
-	patch['play'].value;
+	patch.play;
 };
 var changePatch = {| op |
 	patch['free'].value;
 	currentPatch = currentPatch.perform(op, 1);
 	loadPatch.value(currentPatch);
+};
+var initMixer = {
+	var controls = SynthDescLib.at(\mixer).controlDict;
+	var mixer = Synth(\mixer);
+	MOTOR.fader(25, \amp).connect(mixer, \mixer_amp).value = controls.at(\mixer_amp).defaultValue;
+	MOTOR.fader(26, \amp).connect(mixer, \synth_amp).value = controls.at(\synth_amp).defaultValue;
+	MOTOR.fader(27, \amp).connect(mixer, \pedal_amp).value = controls.at(\pedal_amp).defaultValue;
+	MOTOR.fader(28, \amp).connect(mixer, \mic_amp).value = -40.dbamp;
+	MOTOR.fader(\master, \db, s.volume = _).value = s.volume.volume;
+	MOTOR.fader(\master, \db).set(-30);
 };
 "---------------------------------------------------------------------".postln;
 ~samplesDir = "/home/mlang/annexus/samples";
@@ -31,33 +41,39 @@ Spec.specs['tempo'] = ControlSpec(40, 240, 'linear',
 	units: "BPM"
 );
 
-isActive.value(\motu) {
-	"MOTU detected, using 8 input channels".postln;
-	Server.default.options.numInputBusChannels = 8;
-	Server.default.options.numOutputBusChannels = 4;
+isActive.value('jack@D8A.service') {
+	var options = Server.default.options;
+	"MOTU detected".postln;
+	options.numInputBusChannels = 8;
+	options.numOutputBusChannels = 8;
+	options.memSize = 65536;
 	cond.test = true;
 	cond.signal;
 } {
+	var options = Server.default.options;
 	"MOTU not found".postln;
-	Server.default.options.blockSize = 32;
+	options.blockSize = 32;
 	cond.test = true;
 	cond.signal;
 };
 
+LID.register('TPPS/2 Elan TrackPoint', LID.mouseDeviceSpec);
+// ~trackpoint = LID.open(0x0002, 0x000A);
+
 // MIDI
 MIDIClient.init(verbose: false);
-MIDIClient.externalSources.detect(MOTOR.isMIDIEndPoint) !? {|motor|
+MIDIClient.externalSources.detect(MOTOR.isMIDIEndPoint) !? {| motor |
 	"Connecting to Behringer %...".postf(motor.name);
 	MIDIIn.connect(0, motor);
-	MIDIClient.externalDestinations.detectIndex(MOTOR.isMIDIEndPoint) !? {|i|
-		MOTOR.midiOut = MIDIOut(0).connect(i);
+	MIDIClient.externalDestinations.detectIndex(MOTOR.isMIDIEndPoint) !? {| i |
+		MOTOR.midiOut = MIDIOut(0).connect(i).latency = 0;
 		"Done".postln;
 
 		"Use << and >> to change patches".postln;
 		MOTOR.backward { changePatch.value('-') };
 		MOTOR.forward  { changePatch.value('+') };
 		MOTOR.stop { thisProcess.stop };
-		MOTOR.play { patch[\play].value };
+		MOTOR.play { patch.play };
 
 		"REC will toggle recording".postln;
 		MOTOR.record {
@@ -65,7 +81,7 @@ MIDIClient.externalSources.detect(MOTOR.isMIDIEndPoint) !? {|motor|
 		};
 		
 		"Encoder 32 changes default tempo".postln;
-		MOTOR.encoder(32, \tempo) {|bpm|
+		MOTOR.encoder(32, \tempo) {| bpm |
 			"% BPM\n".postf(bpm.asInteger);
 			TempoClock.default.tempo = bpm/60;
 		};
@@ -88,6 +104,7 @@ Routine.run {
 
 	inform("Master fader controls server volume");
 	MOTOR.fader(\master, \db, s.volume = _).value = s.volume.volume;
+	MOTOR.fader(\master, \db).set(-30);
 	~encoder=Array.fill(3, {
 		Array.fill(8, {
 			Bus.control(s)
@@ -115,7 +132,7 @@ Routine.run {
 
 	"Loading loops...".post;
 	~loop = (~samplesDir +/+ "BT*/*/*.wav").pathMatch.collect{| path |
-		var bps = path.split($/)[7].split($ )[0].asInteger / 60;
+		var bps = path.basename.split(Char.space).at(0).asInteger / 60;
 		SoundFile.use(path, _.duration) !? {| dur |
 			var beats = (dur * bps).round(1);
 			var buf = BBCutBuffer(path, beats);
@@ -274,12 +291,30 @@ Routine.run {
 		ReplaceOut.ar(outBus, out);
 	}).add;
 
-    s.sync(cond);
+	SynthDef(\mixer, {
+		arg synth_amp = 0.1, mixer_amp = 0.1, pedal_amp = 0.1, mic_amp = 0.1;
+		var synth = SoundIn.ar([0, 1], synth_amp);
+		var mixer = SoundIn.ar([2, 3], mixer_amp);
+		var pedal = SoundIn.ar([4, 5], pedal_amp);
+		var mic = SoundIn.ar(7);
+		Out.ar(0, pedal);
+		Out.ar(2, synth.rotate);
+		Out.ar(2, mixer[0]);
+		Out.ar(0, mixer[1]);
+		Out.ar(0, Pan4.ar(mic, 0, 0, mic_amp));
+	}).load(s);
+
+	s.sync(cond);
+
+	ServerTree.add(initMixer, Server.default);
+	initMixer.value;
+
 	loadPatch.value(currentPatch);
 
 	Pbind(*[
 		instrument: \acid,
 		pitch: Pseq([39,42,46,51]),
-		dur: Pseq([Pn(0.25, 3), 0.5], 1)
+		dur: Pseq([Pn(0.25, 3), 0.5], 1),
+		amp: -20.dbamp
     ]).play;
 }
